@@ -28,8 +28,48 @@ const formatTime = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle:
 
 // ── the API (the zeroto-test-app deployment) ───────────────────────────────
 
+// ZeroTo puts an idle app to sleep (after about 5 minutes it is stopped; after about 10 it is removed) and wakes it
+// when the next visitor arrives. A lightly-sleeping app answers the first request after a few seconds. One that was
+// removed first answers with a "waking up" page (HTTP 503, with no CORS header, so a browser can't even read it) for
+// 10–30 seconds. Either way the app is fine — it just needs a moment — so before real calls we ask /health until it
+// answers, and say so while we wait. (/health is a plain GET, safe to repeat.)
+const WAKE_TIMEOUT_MS = 60_000
+const WAKE_POLL_MS = 2_500
+let awakeUntil = 0
+
+const wakeBanner = h("div", { class: "notice", role: "status", "aria-live": "polite", hidden: true }, h("strong", {}, "Waking up the backend… "), "it sleeps when nobody is using it, and takes a few seconds to start.")
+const setWaking = (waking) => (wakeBanner.hidden = !waking)
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function ensureAwake() {
+  if (Date.now() < awakeUntil) return
+  const deadline = Date.now() + WAKE_TIMEOUT_MS
+  let firstTry = true
+  for (;;) {
+    try {
+      const res = await fetch(`${API}/health`, { cache: "no-store", signal: AbortSignal.timeout(15_000) })
+      if (res.ok) {
+        awakeUntil = Date.now() + 90_000 // it stays awake while it is being used
+        setWaking(false)
+        return
+      }
+    } catch {
+      /* asleep: the waking page has no CORS header, so the browser reports a network error */
+    }
+    // The first miss might be a blip; only announce the wait if the second try also misses.
+    if (!firstTry) setWaking(true)
+    firstTry = false
+    if (Date.now() > deadline) {
+      setWaking(false)
+      throw Object.assign(new Error("The backend didn't wake up in time. Wait a moment and try again."), { status: 503 })
+    }
+    await sleep(WAKE_POLL_MS)
+  }
+}
+
 async function api(path, options) {
   if (!API) throw Object.assign(new Error("VITE_API_URL isn't set for this build"), { code: "NO_API" })
+  await ensureAwake()
   const res = await fetch(`${API}${path}`, {
     ...options,
     headers: { "content-type": "application/json", ...options?.headers },
@@ -237,7 +277,7 @@ function layout(content, active) {
   const link = (href, label) => h("a", { href, "data-link": true, "aria-current": href === active ? "page" : false }, label)
   return [
     h("header", {}, h("div", { class: "bar" }, h("span", { class: "brand" }, h("img", { src: "/favicon.svg", alt: "" }), SITE_NAME), h("nav", { "aria-label": "Main" }, link("/", "Home"), link("/notes", "Notes"), link("/about", "About")))),
-    h("main", {}, content),
+    h("main", {}, wakeBanner, content),
   ]
 }
 

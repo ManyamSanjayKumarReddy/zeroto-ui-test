@@ -30,7 +30,13 @@ Open `/notes` directly and reload; it still shows the site (not a 404). `/nothin
 ## Test 5 — rollback
 Releases tab → roll back to the first release and reload: the earlier name/build time is back, served from the stored copy of that release.
 
-## Test 6 — caching and safety (with curl)
+## Test 6 — the backend is asleep
+ZeroTo stops an idle app after about 5 minutes and removes its container after about 10; the next visitor wakes it.
+Leave both apps alone for ~12 minutes, then open this site's **Notes** (or Home). You should see **"Waking up the backend…"** for a few
+to ~30 seconds, and then the notes appear — no error, no refresh needed. (The site asks the app's `/health` until it answers,
+then makes the real call.) Reloading right after, the page is instant: the app is awake.
+
+## Test 7 — caching and safety (with curl)
 ```
 curl -I https://<your-site>/                  # cache-control: no-cache (HTML is always revalidated)
 curl -I https://<your-site>/assets/<file>.js  # cache-control: public, max-age=31536000, immutable
