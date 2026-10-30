@@ -24,6 +24,7 @@ function h(tag, attrs = {}, ...children) {
   return node
 }
 
+const formatBytes = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`)
 const formatTime = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 // ── the API (the zeroto-test-app deployment) ───────────────────────────────
@@ -126,13 +127,19 @@ function homePage() {
     } catch (err) {
       rows.push(["Database", statusPill(err.status === 503 ? "warn" : "bad", err.status === 503 ? "not available" : "error")], ["Detail", err.message])
     }
+    try {
+      const st = await api("/storage")
+      rows.push(["Bucket", `${st.bucketName ?? st.name} (${st.files} ${st.files === 1 ? "file" : "files"}, ${formatBytes(st.bytesUsed)})`])
+    } catch (err) {
+      rows.push(["Bucket", statusPill(err.status === 503 ? "warn" : "bad", err.status === 503 ? "not linked" : "error")])
+    }
     apiBox.append(...rows.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))
   }
   refresh()
 
   page.append(
     h("h1", {}, SITE_NAME),
-    h("p", { class: "lead" }, "A static site built by ZeroTo — plain files served by the platform, no container. It talks to your test app and its database."),
+    h("p", { class: "lead" }, "A static site built by ZeroTo — plain files served by the platform, no container. It talks to your test app, its database and its bucket."),
     h(
       "div",
       { class: "grid" },
@@ -246,6 +253,87 @@ function notesPage() {
   return page
 }
 
+function filesPage() {
+  const page = h("section", {})
+  const status = h("div", {})
+  const crumb = h("p", { class: "mono crumb" })
+  const list = h("ul", { class: "notes" })
+  let prefix = ""
+
+  const show = (err) => status.replaceChildren(err ? h("div", { class: `notice ${err.status === 503 ? "" : "bad"}` }, err.message) : "")
+
+  const nameInput = h("input", { type: "text", name: "name", placeholder: "notes/hello.txt", maxlength: "200", required: true, "aria-label": "File name", autocomplete: "off", value: "notes/hello.txt" })
+  const textInput = h("input", { type: "text", name: "text", placeholder: "What the file says…", maxlength: "500", required: true, "aria-label": "File text", autocomplete: "off" })
+  const submit = h("button", { type: "submit" }, "Save file")
+
+  async function load() {
+    if (!API) return show(Object.assign(new Error("Set VITE_API_URL for this build to use files."), { status: 503 }))
+    try {
+      const out = await api(`/files?prefix=${encodeURIComponent(prefix)}`)
+      show(null)
+      crumb.textContent = `bucket/${prefix}`
+      const rows = []
+      if (prefix) rows.push(h("li", {}, h("button", { class: "ghost", onclick: () => ((prefix = prefix.replace(/[^/]+\/$/, "")), load()) }, "↑ Up"), h("span", { class: "text" }, "Back to the folder above")))
+      for (const folder of out.folders) {
+        rows.push(h("li", {}, h("span", { class: "text mono" }, `📁 ${folder.slice(prefix.length)}`), h("button", { class: "ghost", onclick: () => ((prefix = folder), load()) }, "Open")))
+      }
+      for (const f of out.files) {
+        rows.push(
+          h(
+            "li",
+            {},
+            h("span", { class: "text mono" }, f.name),
+            h("time", { datetime: f.modified ?? "" }, `${formatBytes(f.size)}${f.modified ? ` · ${formatTime(f.modified)}` : ""}`),
+            h("button", { class: "ghost", "aria-label": `Open ${f.name}`, onclick: async () => { try { window.open((await api(`/files/link?key=${encodeURIComponent(f.key)}`)).url, "_blank", "noopener") } catch (err) { show(err) } } }, "Open"),
+            h("button", { class: "ghost", "aria-label": `Delete ${f.name}`, onclick: async () => { try { await api(`/files?key=${encodeURIComponent(f.key)}`, { method: "DELETE" }); load() } catch (err) { show(err) } } }, "Delete"),
+          ),
+        )
+      }
+      list.replaceChildren(...(rows.length ? rows : [h("li", { class: "empty" }, "Nothing here yet. Save a file — it goes into your ZeroTo bucket.")]))
+    } catch (err) {
+      list.replaceChildren()
+      show(err)
+    }
+  }
+
+  const form = h(
+    "form",
+    {
+      class: "stack",
+      onsubmit: async (event) => {
+        event.preventDefault()
+        submit.disabled = true
+        try {
+          const saved = await api("/files", { method: "POST", body: JSON.stringify({ name: nameInput.value, text: textInput.value }) })
+          textInput.value = ""
+          prefix = saved.saved.includes("/") ? saved.saved.slice(0, saved.saved.lastIndexOf("/") + 1) : ""
+          await load()
+        } catch (err) {
+          show(err)
+        } finally {
+          submit.disabled = false
+          textInput.focus()
+        }
+      },
+    },
+    nameInput,
+    textInput,
+    submit,
+  )
+
+  page.append(
+    h("h1", {}, "Files"),
+    h("p", { class: "lead" }, "Saved by your zeroto-test-app in the bucket you linked to it. The browser only talks to the app: the bucket's key never leaves the server."),
+    !API && setupNotice(),
+    form,
+    status,
+    crumb,
+    list,
+  )
+  load()
+  return page
+}
+
 function aboutPage() {
   return h(
     "section",
@@ -270,13 +358,14 @@ function notFoundPage() {
 const routes = {
   "/": { title: "Home", page: homePage },
   "/notes": { title: "Notes", page: notesPage },
+  "/files": { title: "Files", page: filesPage },
   "/about": { title: "About", page: aboutPage },
 }
 
 function layout(content, active) {
   const link = (href, label) => h("a", { href, "data-link": true, "aria-current": href === active ? "page" : false }, label)
   return [
-    h("header", {}, h("div", { class: "bar" }, h("span", { class: "brand" }, h("img", { src: "/favicon.svg", alt: "" }), SITE_NAME), h("nav", { "aria-label": "Main" }, link("/", "Home"), link("/notes", "Notes"), link("/about", "About")))),
+    h("header", {}, h("div", { class: "bar" }, h("span", { class: "brand" }, h("img", { src: "/favicon.svg", alt: "" }), SITE_NAME), h("nav", { "aria-label": "Main" }, link("/", "Home"), link("/notes", "Notes"), link("/files", "Files"), link("/about", "About")))),
     h("main", {}, wakeBanner, content),
   ]
 }

@@ -3,7 +3,7 @@
 A small **static site** (Vite, no framework) for testing ZeroTo's static-site hosting, and a front end for the
 [`zeroto-test-app`](https://github.com/ManyamSanjayKumarReddy/zeroto-test-app) API and its managed database.
 
-Pages: **Home** (build info + API/database status), **Notes** (add/delete notes stored in the database), **About**.
+Pages: **Home** (build info + API, database and bucket status), **Notes** (add/delete notes stored in the database), **Files** (save, list, open and delete text files in a bucket), **About**.
 It has client-side routing, a hashed JS/CSS bundle, an icon, and `robots.txt`.
 
 ## Deploy it
@@ -26,6 +26,13 @@ Open `/notes` directly and reload; it still shows the site (not a 404). `/nothin
 2. Back here: Variables → `VITE_API_URL` = the app's URL (`https://…`, no trailing slash), **Used by: Build**, redeploy this site.
 3. **Home** shows the app *reachable* and *Connected to app as app*. **Notes**: add a note, reload, it is still there.
 4. Pause the database in ZeroTo: Notes shows a "not available" message; Start it, and the notes are back.
+
+## Test 4b — a bucket
+1. In [`zeroto-test-app`](https://github.com/ManyamSanjayKumarReddy/zeroto-test-app) create a bucket and link it to the app (its README, Test 9), redeploy the app. (`VITE_API_URL` is the same as above; no rebuild is needed unless you changed it.)
+2. **Home** now has a *Bucket* row: the bucket's name, how many files and how much space they use. Before linking it says *not linked*.
+3. **Files**: save `notes/hello.txt` with some text. It appears in the list (under the `notes/` folder), and in the bucket's Files screen in ZeroTo.
+4. **Open** shows the text in a new tab (a link made for that one file); **Delete** removes it. The folder disappears when it is empty.
+5. Unlink the bucket (and redeploy the app): Files shows a "not linked" message and Home says *not linked*; Notes still works.
 
 ## Test 5 — rollback
 Releases tab → roll back to the first release and reload: the earlier name/build time is back, served from the stored copy of that release.
